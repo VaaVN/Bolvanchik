@@ -5,23 +5,23 @@ using System;
 public class CameraRay : MonoBehaviour
 {
     [Header("Input Actions")]
-    [SerializeField] private InputActionReference _mousePosition;
     [SerializeField] private InputActionReference _mouseClick;
 
-    [Header("Spring Settings")]
-    [SerializeField] private float _springForce = 100f;
-    [SerializeField] private float _damper = 10f;
-    [SerializeField] private float _drag = 5f;
+    [Header("Drag Settings")]
+    [SerializeField] private float _dragForce = 100f;
+    [SerializeField] private float _velocityDamper = 10f;
+    [SerializeField] private float _drag = 15f;
     [SerializeField] private float _angularDrag = 5f;
+
+    [Header("Limb Constraint")]
+    [SerializeField] private Rigidbody _mainBody;
+    [SerializeField] private float _maxLimbDistance = 1.5f;
 
     public static event Action<GameObject> OnObjectReleased;
 
     private Camera _mainCamera;
-    private GameObject _draggedObject;
     private Rigidbody _draggedRb;
-    private SpringJoint _springJoint;
     private float _dragDistance;
-
     private float _oldDrag;
     private float _oldAngularDrag;
 
@@ -32,7 +32,6 @@ public class CameraRay : MonoBehaviour
 
     private void OnEnable()
     {
-        _mousePosition.action.Enable();
         _mouseClick.action.Enable();
         _mouseClick.action.started += OnClickStarted;
         _mouseClick.action.canceled += OnClickCanceled;
@@ -40,37 +39,35 @@ public class CameraRay : MonoBehaviour
 
     private void OnDisable()
     {
-        _mousePosition.action.Disable();
-        _mouseClick.action.Disable();
         _mouseClick.action.started -= OnClickStarted;
         _mouseClick.action.canceled -= OnClickCanceled;
+        _mouseClick.action.Disable();
+
         ReleaseObject();
     }
 
     private void FixedUpdate()
     {
-        if (_draggedRb != null && _springJoint != null)
-        {
-            UpdateSpringTarget();
-        }
+        if (_draggedRb != null)
+            DragObject();
     }
 
     private void OnClickStarted(InputAction.CallbackContext context)
     {
-        if (_draggedObject != null) return;
+        if (_draggedRb != null)
+            return;
 
-        Vector2 mousePos = _mousePosition.action.ReadValue<Vector2>();
-        Ray ray = _mainCamera.ScreenPointToRay(mousePos);
-        RaycastHit hit;
+        Ray ray = _mainCamera.ScreenPointToRay(GetPointerPosition());
 
-        if (Physics.Raycast(ray, out hit, Mathf.Infinity))
-        {
-            var draggable = hit.transform.GetComponent<Dragble>();
-            if (draggable != null)
-            {
-                StartDrag(hit);
-            }
-        }
+        if (!Physics.Raycast(ray, out RaycastHit hit))
+            return;
+
+        Dragble dragble = hit.transform.GetComponentInParent<Dragble>();
+
+        if (dragble == null)
+            return;
+
+        StartDrag(hit, dragble.GetComponent<Rigidbody>());
     }
 
     private void OnClickCanceled(InputAction.CallbackContext context)
@@ -78,73 +75,55 @@ public class CameraRay : MonoBehaviour
         ReleaseObject();
     }
 
-    private void StartDrag(RaycastHit hit)
+    private Vector2 GetPointerPosition()
     {
-        _draggedObject = hit.transform.gameObject;
-        _draggedRb = hit.transform.GetComponent<Rigidbody>();
+        return Pointer.current?.position.ReadValue() ?? Vector2.zero;
+    }
 
-        if (_draggedRb == null)
-        {
-            _draggedObject = null;
+    private void StartDrag(RaycastHit hit, Rigidbody rb)
+    {
+        if (rb == null)
             return;
-        }
+
+        _draggedRb = rb;
 
         _dragDistance = Vector3.Distance(_mainCamera.transform.position, hit.point);
 
-        _oldDrag = _draggedRb.linearDamping; 
+        _oldDrag = _draggedRb.linearDamping;
         _oldAngularDrag = _draggedRb.angularDamping;
+
         _draggedRb.linearDamping = _drag;
         _draggedRb.angularDamping = _angularDrag;
-
-        GameObject anchorGO = new GameObject("TempSpringAnchor");
-        anchorGO.transform.position = hit.point;
-        var anchorRb = anchorGO.AddComponent<Rigidbody>();
-        anchorRb.isKinematic = true;
-
-        _springJoint = _draggedObject.AddComponent<SpringJoint>();
-        _springJoint.connectedBody = anchorRb;
-        
-        _springJoint.autoConfigureConnectedAnchor = false;
-        _springJoint.anchor = _draggedObject.transform.InverseTransformPoint(hit.point);
-        _springJoint.connectedAnchor = Vector3.zero;
-        
-        _springJoint.spring = _springForce;
-        _springJoint.damper = _damper;
     }
 
-    private void UpdateSpringTarget()
+    private void DragObject()
     {
-        Vector2 mousePos = _mousePosition.action.ReadValue<Vector2>();
-        Vector3 targetPos = _mainCamera.ScreenToWorldPoint(new Vector3(mousePos.x, mousePos.y, _dragDistance));
-        
-        if (_springJoint.connectedBody != null)
-        {
-            _springJoint.connectedBody.MovePosition(targetPos);
-        }
+        Vector2 pointerPos = GetPointerPosition();
+
+        Vector3 targetPos = _mainCamera.ScreenToWorldPoint(
+            new Vector3(pointerPos.x, pointerPos.y, _dragDistance));
+
+        Vector3 fromBody = targetPos - _mainBody.position;
+
+        if (fromBody.magnitude > _maxLimbDistance)
+            targetPos = _mainBody.position + fromBody.normalized * _maxLimbDistance;
+
+        Vector3 delta = targetPos - _draggedRb.position;
+        Vector3 force = delta * _dragForce - _draggedRb.linearVelocity * _velocityDamper;
+
+        _draggedRb.AddForce(force);
     }
 
     private void ReleaseObject()
     {
-        if (_draggedObject == null) return;
+        if (_draggedRb == null)
+            return;
 
-        OnObjectReleased?.Invoke(_draggedObject);
+        OnObjectReleased?.Invoke(_draggedRb.gameObject);
 
-        if (_springJoint != null)
-        {
-            if (_springJoint.connectedBody != null)
-            {
-                Destroy(_springJoint.connectedBody.gameObject);
-            }
-            Destroy(_springJoint);
-        }
+        _draggedRb.linearDamping = _oldDrag;
+        _draggedRb.angularDamping = _oldAngularDrag;
 
-        if (_draggedRb != null)
-        {
-            _draggedRb.linearDamping = _oldDrag; 
-            _draggedRb.angularDamping = _oldAngularDrag;
-        }
-
-        _draggedObject = null;
         _draggedRb = null;
     }
 }
