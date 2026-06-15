@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using System;
 
 public class CameraRay : MonoBehaviour
 {
@@ -7,13 +8,22 @@ public class CameraRay : MonoBehaviour
     [SerializeField] private InputActionReference _mousePosition;
     [SerializeField] private InputActionReference _mouseClick;
 
+    [Header("Spring Settings")]
+    [SerializeField] private float _springForce = 100f;
+    [SerializeField] private float _damper = 10f;
+    [SerializeField] private float _drag = 5f;
+    [SerializeField] private float _angularDrag = 5f;
+
+    public static event Action<GameObject> OnObjectReleased;
+
     private Camera _mainCamera;
     private GameObject _draggedObject;
     private Rigidbody _draggedRb;
-    private Renderer _draggedRenderer;
+    private SpringJoint _springJoint;
     private float _dragDistance;
 
-    private Vector3 _targetPosition;
+    private float _oldDrag;
+    private float _oldAngularDrag;
 
     private void Awake()
     {
@@ -39,9 +49,9 @@ public class CameraRay : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (_draggedObject != null && _draggedRb != null)
+        if (_draggedRb != null && _springJoint != null)
         {
-            DragObject();
+            UpdateSpringTarget();
         }
     }
 
@@ -72,7 +82,6 @@ public class CameraRay : MonoBehaviour
     {
         _draggedObject = hit.transform.gameObject;
         _draggedRb = hit.transform.GetComponent<Rigidbody>();
-        _draggedRenderer = hit.transform.GetComponent<Renderer>();
 
         if (_draggedRb == null)
         {
@@ -80,25 +89,62 @@ public class CameraRay : MonoBehaviour
             return;
         }
 
-        _draggedRb.isKinematic = false;
-        _draggedRb.WakeUp();
         _dragDistance = Vector3.Distance(_mainCamera.transform.position, hit.point);
+
+        _oldDrag = _draggedRb.linearDamping; 
+        _oldAngularDrag = _draggedRb.angularDamping;
+        _draggedRb.linearDamping = _drag;
+        _draggedRb.angularDamping = _angularDrag;
+
+        GameObject anchorGO = new GameObject("TempSpringAnchor");
+        anchorGO.transform.position = hit.point;
+        var anchorRb = anchorGO.AddComponent<Rigidbody>();
+        anchorRb.isKinematic = true;
+
+        _springJoint = _draggedObject.AddComponent<SpringJoint>();
+        _springJoint.connectedBody = anchorRb;
+        
+        _springJoint.autoConfigureConnectedAnchor = false;
+        _springJoint.anchor = _draggedObject.transform.InverseTransformPoint(hit.point);
+        _springJoint.connectedAnchor = Vector3.zero;
+        
+        _springJoint.spring = _springForce;
+        _springJoint.damper = _damper;
     }
 
-    private void DragObject()
+    private void UpdateSpringTarget()
     {
         Vector2 mousePos = _mousePosition.action.ReadValue<Vector2>();
-        _targetPosition = _mainCamera.ScreenToWorldPoint(new Vector3(mousePos.x, mousePos.y, _dragDistance));
-
-        _draggedRb.MovePosition(_targetPosition);
+        Vector3 targetPos = _mainCamera.ScreenToWorldPoint(new Vector3(mousePos.x, mousePos.y, _dragDistance));
+        
+        if (_springJoint.connectedBody != null)
+        {
+            _springJoint.connectedBody.MovePosition(targetPos);
+        }
     }
 
     private void ReleaseObject()
     {
         if (_draggedObject == null) return;
 
+        OnObjectReleased?.Invoke(_draggedObject);
+
+        if (_springJoint != null)
+        {
+            if (_springJoint.connectedBody != null)
+            {
+                Destroy(_springJoint.connectedBody.gameObject);
+            }
+            Destroy(_springJoint);
+        }
+
+        if (_draggedRb != null)
+        {
+            _draggedRb.linearDamping = _oldDrag; 
+            _draggedRb.angularDamping = _oldAngularDrag;
+        }
+
         _draggedObject = null;
         _draggedRb = null;
-        _draggedRenderer = null;
     }
 }
