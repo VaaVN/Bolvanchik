@@ -21,11 +21,12 @@ public class CameraRay : MonoBehaviour
 
     private Camera _mainCamera;
     private Rigidbody _draggedRb;
+    private Rigidbody _hoveredRb;
+
     private float _dragDistance;
     private float _oldDrag;
     private float _oldAngularDrag;
 
-    private Renderer[] _dragRenderers;
     private MaterialPropertyBlock _block;
 
     private void Awake()
@@ -46,8 +47,12 @@ public class CameraRay : MonoBehaviour
         _mouseClick.action.started -= OnClickStarted;
         _mouseClick.action.canceled -= OnClickCanceled;
         _mouseClick.action.Disable();
-
         ReleaseObject();
+    }
+
+    private void Update()
+    {
+        UpdateHover();
     }
 
     private void FixedUpdate()
@@ -61,8 +66,8 @@ public class CameraRay : MonoBehaviour
 
         if (!Physics.Raycast(_mainCamera.ScreenPointToRay(GetPointerPosition()), out RaycastHit hit)) return;
 
-        var dragble = hit.transform.GetComponentInParent<Dragble>();
-        if (!dragble) return;
+        Dragble dragble = hit.transform.GetComponentInParent<Dragble>();
+        if (dragble == null) return;
 
         StartDrag(hit, dragble.GetComponent<Rigidbody>());
     }
@@ -75,6 +80,42 @@ public class CameraRay : MonoBehaviour
     private Vector2 GetPointerPosition()
     {
         return Pointer.current != null ? Pointer.current.position.ReadValue() : Vector2.zero;
+    }
+
+    private void UpdateHover()
+    {
+        if (_draggedRb != null) return;
+
+        Ray ray = _mainCamera.ScreenPointToRay(GetPointerPosition());
+
+        if (Physics.Raycast(ray, out RaycastHit hit))
+        {
+            var dragble = hit.transform.GetComponentInParent<Dragble>();
+
+            if (dragble != null)
+            {
+                Rigidbody rb = dragble.GetComponent<Rigidbody>();
+
+                if (_hoveredRb != rb)
+                {
+                    ClearHover();
+                    _hoveredRb = rb;
+                    ApplyHighlight(_hoveredRb, true, Color.green);
+                }
+                return;
+            }
+        }
+
+        if (!_mouseClick.action.IsPressed())
+            ClearHover();
+    }
+
+    private void ClearHover()
+    {
+        if (_hoveredRb == null) return;
+
+        ApplyHighlight(_hoveredRb, false, Color.green);
+        _hoveredRb = null;
     }
 
     private void StartDrag(RaycastHit hit, Rigidbody rb)
@@ -90,7 +131,7 @@ public class CameraRay : MonoBehaviour
         rb.linearDamping = _drag;
         rb.angularDamping = _angularDrag;
 
-        ApplyHighlight(rb, true);
+        ApplyHighlight(rb, true, Color.blue);
     }
 
     private void DragObject()
@@ -119,30 +160,24 @@ public class CameraRay : MonoBehaviour
         _draggedRb.linearDamping = _oldDrag;
         _draggedRb.angularDamping = _oldAngularDrag;
 
-        ApplyHighlight(_draggedRb, false);
-
+        ApplyHighlight(_draggedRb, false, Color.blue);
         _draggedRb = null;
     }
 
-    private void ApplyHighlight(Rigidbody rb, bool active)
+    private void ApplyHighlight(Rigidbody rb, bool active, Color color)
     {
-        _dragRenderers = rb.GetComponentsInChildren<Renderer>();
-
-        for (int i = 0; i < _dragRenderers.Length; i++)
+        foreach (var r in rb.GetComponentsInChildren<Renderer>())
         {
-            var r = _dragRenderers[i];
             if (!r) continue;
 
             r.GetPropertyBlock(_block);
 
             if (active)
             {
-                Color blue = Color.blue;
+                Color changingColor = color;
 
-                if (r.sharedMaterial.HasProperty("_BaseColor"))
-                    _block.SetColor("_BaseColor", blue);
-                else if (r.sharedMaterial.HasProperty("_Color"))
-                    _block.SetColor("_Color", blue);
+                if (r.sharedMaterial.HasProperty("_BaseColor")) _block.SetColor("_BaseColor", changingColor);
+                else if (r.sharedMaterial.HasProperty("_Color")) _block.SetColor("_Color", changingColor);
             }
             else
             {
