@@ -3,7 +3,7 @@ using System;
 
 public class Dragble : MonoBehaviour
 {
-    [Header("Drag Settings")]
+    [Header("Prefs")]
     [SerializeField] private float _dragForce = 100f;
     [SerializeField] private float _velocityDamper = 10f;
     [SerializeField] private float _drag = 15f;
@@ -11,79 +11,153 @@ public class Dragble : MonoBehaviour
 
     private Rigidbody rb;
     private MaterialPropertyBlock _block;
-    private float _oldDrag;
-    private float _oldAngularDrag;
+    private Rock _attachedrock,_ignoredrock;
+    private float _ignoreUntil;
+    private ConfigurableJoint _attachJoint;
+    private LimbState _curState;
+    private bool _isHovered;
 
-    private Camera _mainCamera;
-    private float _dragDistance;
-    private bool _isDragged;
-    public static event Action<GameObject> OnObjectReleased;
-
-    private void Start()
+    private void Awake()
     {
+
         rb = GetComponent<Rigidbody>();
         _block = new MaterialPropertyBlock();
-        _mainCamera = Camera.main;
     }
 
-    public void OnGrab(float dragDistance)
+    public void OnGrab()
     {
-        _dragDistance = dragDistance;
-
-        _oldDrag = rb.linearDamping;
-        _oldAngularDrag = rb.angularDamping;
-
         rb.linearDamping = _drag;
         rb.angularDamping = _angularDrag;
-
-        SetHighlight(true, Color.blue);
-        _isDragged = true;
+        if(_curState == LimbState.Attached) Detach();
+        SetState(LimbState.Dragging);
     }
 
     public void OnRelease()
     {
-        if (!_isDragged) return;
+        if (_curState != LimbState.Dragging)
+            return;
 
-        OnObjectReleased?.Invoke(gameObject);
-
-        rb.linearDamping = _oldDrag;
-        rb.angularDamping = _oldAngularDrag;
-
-        SetHighlight(false);
-        _isDragged = false; 
+        SetState(LimbState.Free);
     }
+
 
     public void ApplyDragForce(Vector3 targetPos)
     {
         Vector3 delta = targetPos - rb.position;
-        Vector3 force = delta * _dragForce - rb.linearVelocity * _velocityDamper;
+
+        Vector3 force =
+            delta * _dragForce -
+            rb.linearVelocity * _velocityDamper;
+
         rb.AddForce(force);
     }
 
-    public void SetHover(bool isActive)
+    public void SetState(LimbState state)
     {
-        SetHighlight(isActive, Color.green);
+        _curState = state;
+        ChangeVisual();
     }
 
-    public void SetHighlight(bool active, Color color = new())
+    public void SetHover(bool value)
     {
-        foreach (var r in rb.GetComponentsInChildren<Renderer>())
+        _isHovered = value;
+        ChangeVisual();
+    }
+    public void ChangeVisual()
+    {
+        Color color;
+        foreach (Renderer r in rb.GetComponentsInChildren<Renderer>())
         {
-            if (!r) continue;
+            if (!r)
+                continue;
 
             r.GetPropertyBlock(_block);
+            _block.Clear();
+            switch (_curState)
+            {
+                case LimbState.Dragging:
+                    color = Color.blue;
+                    break;
+                case LimbState.Attached:
+                    if (_isHovered)
+                    {
+                        color = Color.yellow;
+                        break;
+                    }
+                    color = Color.green;
+                    break;
+                case LimbState.Tired:
+                    color = Color.red;
+                    break;
+                default:
+                    if (_isHovered)
+                    {
+                        color = Color.yellow;
+                        break;
+                    }
+                    color = Color.white;
+                    break;
+            }
+            
+            if (r.sharedMaterial.HasProperty("_BaseColor"))
+                _block.SetColor("_BaseColor", color);
 
-            if (active)
-            {
-                if (r.sharedMaterial.HasProperty("_BaseColor")) _block.SetColor("_BaseColor", color);
-                else if (r.sharedMaterial.HasProperty("_Color")) _block.SetColor("_Color", color);
-            }
-            else
-            {
-                _block.Clear();
-            }
+            else if (r.sharedMaterial.HasProperty("_Color"))
+                _block.SetColor("_Color", color);
 
             r.SetPropertyBlock(_block);
         }
     }
+    
+    public bool CanAttach(Rock rock)
+    {
+        if (_ignoredrock == rock &&
+            Time.time < _ignoreUntil)
+            return false;
+
+        return _curState == LimbState.Dragging;
+    }
+    public void Attach(Rock rock)
+    {
+        _attachedrock = rock;
+        CreateAttachJoint(rock);
+        _attachedrock.AttachLimb();
+        SetState(LimbState.Attached);
+    }
+
+    public void Detach()
+    {
+        _ignoreUntil = Time.time + 1f;
+        _ignoredrock = _attachedrock;
+        DestroyAttachJoint();
+        _attachedrock.DetachLimb();
+        _attachedrock = null;
+        SetState(LimbState.Free);
+    }
+    private void CreateAttachJoint(Rock rock)
+    {
+        _attachJoint = gameObject.AddComponent<ConfigurableJoint>();
+
+        _attachJoint.connectedBody = rock.GetComponent<Rigidbody>();
+        _attachJoint.xMotion = ConfigurableJointMotion.Locked;
+        _attachJoint.yMotion = ConfigurableJointMotion.Locked;
+        _attachJoint.zMotion = ConfigurableJointMotion.Locked;
+        _attachJoint.projectionMode = JointProjectionMode.PositionAndRotation;
+        _attachJoint.angularXMotion = ConfigurableJointMotion.Free;
+        _attachJoint.angularYMotion = ConfigurableJointMotion.Free;
+        _attachJoint.angularZMotion = ConfigurableJointMotion.Free;
+        _attachJoint.projectionDistance = 0.01f;
+        _attachJoint.projectionAngle = 1f;
+
+    }
+    private void DestroyAttachJoint()
+    {
+        if (_attachJoint != null)
+        {
+            _attachJoint.connectedBody = null;
+            Destroy(_attachJoint);
+            _attachJoint = null;
+        }
+    }
+    
 }
