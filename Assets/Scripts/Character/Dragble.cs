@@ -3,11 +3,22 @@ using System;
 
 public class Dragble : MonoBehaviour
 {
+    [Header("Ref")]
+    [SerializeField] private AudioSource _audioSource;
+    
     [Header("Prefs")]
     [SerializeField] private float _dragForce = 100f;
     [SerializeField] private float _velocityDamper = 10f;
     [SerializeField] private float _drag = 15f;
     [SerializeField] private float _angularDrag = 5f;
+    
+    [Header("StaminaPrefs")]
+    [SerializeField] private bool _useStamina = false;
+    [SerializeField] private float _staminaTime = 5f;
+    [SerializeField] private int _staminaMaterialIndex = 1;
+
+    float _stamina;
+    private Material _staminaMaterial;
 
     private Rigidbody rb;
     private MaterialPropertyBlock _block;
@@ -16,16 +27,27 @@ public class Dragble : MonoBehaviour
     private ConfigurableJoint _attachJoint;
     private LimbState _curState;
     private bool _isHovered;
+    
+    public bool IsAttached => _curState == LimbState.Attached;
+    public bool IsTired => _curState == LimbState.Tired;
 
     private void Awake()
     {
+        Renderer renderer = GetComponentInChildren<Renderer>();
 
+        if (renderer != null && renderer.materials.Length > _staminaMaterialIndex)
+        {
+            _staminaMaterial = renderer.materials[_staminaMaterialIndex];
+        }
+        
         rb = GetComponent<Rigidbody>();
         _block = new MaterialPropertyBlock();
     }
 
     public void OnGrab()
     {
+        if (_curState == LimbState.Tired)
+            return;
         rb.linearDamping = _drag;
         rb.angularDamping = _angularDrag;
         if(_curState == LimbState.Attached) Detach();
@@ -71,7 +93,7 @@ public class Dragble : MonoBehaviour
             if (!r)
                 continue;
 
-            r.GetPropertyBlock(_block);
+            r.GetPropertyBlock(_block, 0);
             _block.Clear();
             switch (_curState)
             {
@@ -105,7 +127,7 @@ public class Dragble : MonoBehaviour
             else if (r.sharedMaterial.HasProperty("_Color"))
                 _block.SetColor("_Color", color);
 
-            r.SetPropertyBlock(_block);
+            r.SetPropertyBlock(_block, 0);
         }
     }
     
@@ -123,6 +145,7 @@ public class Dragble : MonoBehaviour
         CreateAttachJoint(rock);
         _attachedrock.AttachLimb();
         SetState(LimbState.Attached);
+        _audioSource.Play();
     }
 
     public void Detach()
@@ -159,5 +182,53 @@ public class Dragble : MonoBehaviour
             _attachJoint = null;
         }
     }
+    public void ChangeStamina(float delta)
+    {
+        if (!_useStamina)
+            return;
     
+        _stamina += delta;
+        _stamina = Mathf.Clamp(_stamina, 0f, 100f);
+    
+        UpdateStaminaVisual();
+    
+        if (_curState != LimbState.Tired &&
+            _stamina >= 100f)
+        {
+            if (_curState == LimbState.Attached)
+                Detach();
+    
+            SetState(LimbState.Tired);
+            return;
+        }
+    
+        if (_curState == LimbState.Tired &&
+            _stamina <= 0f)
+        {
+            SetState(LimbState.Free);
+        }
+    }
+    public void Stamina(float multiplier)
+    {
+        ChangeStamina(
+            Time.deltaTime *
+            (100f / _staminaTime) *
+            multiplier);
+    }
+
+    public void Recover()
+    {
+        ChangeStamina(
+            -Time.deltaTime *
+            (100f / _staminaTime));
+    }
+    private void UpdateStaminaVisual()
+    {
+        if (_staminaMaterial == null)
+            return;
+
+        float alpha = _stamina / 100f;
+
+        _staminaMaterial.SetFloat("_Transparency", alpha);
+    }
 }
