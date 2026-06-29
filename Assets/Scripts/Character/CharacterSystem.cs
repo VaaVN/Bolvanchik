@@ -90,6 +90,7 @@ public class CharacterSystem : MonoBehaviour
 
     private void Update()
     {
+        UpdateStamina();
         if (_draggedObject == null)
             return;
         DragObject();
@@ -154,5 +155,45 @@ public class CharacterSystem : MonoBehaviour
         
         foreach (Rigidbody rb in _rigidbodies)
             rb.WakeUp();
+    }
+    private void UpdateStamina()
+    {
+        int attachedLegs = 0;
+        foreach (Dragble leg in Legs)
+        {
+            if (leg.IsAttached)
+                attachedLegs++;
+            
+        }
+        foreach (Dragble hand in Hands)
+        {
+            if (hand.IsTired)
+            {
+                hand.Recover();
+                Debug.Log("Recov1");
+                continue;
+            }
+            if (!hand.IsAttached)
+            {
+                hand.Recover();
+                Debug.Log("Recov1");
+                continue;
+            }
+            switch (attachedLegs)
+            {
+                case 0:
+                    hand.Stamina(1f);
+                    Debug.Log("0");
+                    break;
+                case 1:
+                    hand.Stamina(0.5f);
+                    Debug.Log("1");
+                    break;
+                case 2:
+                    hand.Recover();
+                    Debug.Log("2");
+                    break;
+            }
+        }
     }
 }
